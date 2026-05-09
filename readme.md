@@ -26,5 +26,14 @@ make -C ./build -j $(nproc)
 Uruchom maszynę wraz z emulowanym akceleratorem:
 ```
 ./qemu/build/qemu-system-aarch64 -M virt -cpu cortex-a53 -nographic -smp 1 \
--kernel ./buildroot/output/images/Image -append "loglevel=2" -device pka
+-kernel ./buildroot/output/images/Image -append "loglevel=2" \
+-virtfs local,path=./shared,mount_tag=shared_folder,security_model=mapped \
+-device pka
+```
+
+### Użytkowanie
+
+Zamontuj współdzielony katalog:
+```
+mkdir -p /mnt/shared && mount -t 9p -o trans=virtio,version=9p2000.L shared_folder /mnt/shared
 ```
