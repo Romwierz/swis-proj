@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+script_dir=$(dirname "$0") && cd "$script_dir"
+
+exec ./qemu/build/qemu-system-aarch64 -M virt -cpu cortex-a53 -nographic -smp 1 \
+-kernel ./buildroot/output/images/Image -append "loglevel=2" \
+-virtfs local,path=./shared,mount_tag=shared_folder,security_model=mapped -device pka
