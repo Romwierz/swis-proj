@@ -33,6 +33,23 @@ Uruchom maszynę wraz z emulowanym akceleratorem:
 
 ### Użytkowanie
 
+Sprawdź numery szyny i urządzenia PCIe oraz adres bazowy pierwszego regionu zmapowanej przestrzeni
+adresowej urządzenia (BAR0), i na ich podstawie ustaw bit umożliwiający dostęp tej przestrzeni
+adresowej:
+```
+lspci
+setpci <nr_szyny:nr_urządzenia> command=2
+```
+
+Odczytaj pierwszy rejestr, w którym zawarte jest ID urządzenia oraz zapisz wartość do drugiego
+rejestru i sprawdź poprawność zapisu:
+```
+devmem <adres_bazowy_regionu0>
+devmem <adres_bazowy_regionu0 + 4>
+devmem <adres_bazowy_regionu0 + 4> 32 1
+devmem <adres_bazowy_regionu0 + 4>
+```
+
 Zamontuj współdzielony katalog:
 ```
 mkdir -p /mnt/shared && mount -t 9p -o trans=virtio,version=9p2000.L shared_folder /mnt/shared
