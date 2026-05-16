@@ -2,6 +2,15 @@
 
 script_dir=$(dirname "$0") && cd "$script_dir"
 
-exec ./qemu/build/qemu-system-aarch64 -M virt -cpu cortex-a53 -nographic -smp 1 \
+qemu_pty_link=/tmp/qemu-pty
+rm -f $qemu_pty_link
+
+if [ "$1" = -debug ]; then
+    run_cmd='gdb --args'
+    tmux split-window -h "tio $qemu_pty_link" && tmux select-pane -L
+    qemu_serial="-serial pty:$qemu_pty_link"
+fi
+
+exec $run_cmd ./qemu/build/qemu-system-aarch64 $qemu_serial -M virt -cpu cortex-a53 -nographic -smp 1 \
 -kernel ./buildroot/output/images/Image -append "loglevel=2" \
 -virtfs local,path=./shared,mount_tag=shared_folder,security_model=mapped -device pka
