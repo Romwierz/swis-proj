@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 modulus_length modulus"
+    exit
+fi
+
+mod_len="$1"
+mod="$2"
+
+# enable device's memory space access
+setpci -s 0:3 command=2
+
+# write modulus length and value
+devmem 0x10100004 32 "$mod_len"
+devmem 0x1010095c 32 "$mod"
+
+# assert start bit to perform the operation
+devmem 0x10000008 32 2
+
+# read the result (R^2 % mod)
+echo -n "Montgomery parameter (R^2 % modulus) is "
+devmem 0x10100194 32
