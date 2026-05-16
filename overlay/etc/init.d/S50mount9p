@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+
+MOUNT_POINT=/mnt/shared
+
+case "$1" in
+    start)
+        printf "Mounting shared folder at $MOUNT_POINT: "
+        mkdir -p $MOUNT_POINT && mount -t 9p -o trans=virtio,version=9p2000.L shared_folder $MOUNT_POINT
+        [ $? = 0 ] && echo "OK" || echo "FAIL"
+        ;;
+    stop)
+        printf "Unmounting shared folder: "
+        umount $MOUNT_POINT
+        [ $? = 0 ] && echo "OK" || echo "FAIL"
+        ;;
+    restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?
