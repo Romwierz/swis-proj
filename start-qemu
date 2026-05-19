@@ -7,10 +7,22 @@ rm -f $qemu_pty_link
 
 if [ "$1" = -debug ]; then
     run_cmd='gdb --args'
-    tmux split-window -h "tio $qemu_pty_link" && tmux select-pane -L
+    tio_pane=$(tmux split-window -h -P -F '#{pane_id}' "tio $qemu_pty_link") && tmux select-pane -L
     qemu_serial="-serial pty:$qemu_pty_link"
+else
+    run_cmd=exec
 fi
 
-exec $run_cmd ./qemu/build/qemu-system-aarch64 $qemu_serial -M virt -cpu cortex-a53 -nographic -smp 1 \
+$run_cmd ./qemu/build/qemu-system-aarch64 $qemu_serial -M virt -cpu cortex-a53 -nographic -smp 1 \
 -kernel ./buildroot/output/images/Image -append "loglevel=2" \
 -virtfs local,path=./shared,mount_tag=shared_folder,security_model=mapped -device pka
+
+status=$?
+
+if [ -n "$tio_pane" ]; then
+    tmux kill-pane -t "$tio_pane"
+fi
+
+rm -f $qemu_pty_link
+
+exit $status
