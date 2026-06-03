@@ -1,3 +1,5 @@
 buildroot*/
 build/
 shared/
+.gdb_history
+overlay/usr/bin/
