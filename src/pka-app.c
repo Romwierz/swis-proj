@@ -7,6 +7,9 @@
 #include <string.h>
 #include "pka.h"
 
+// The maximum ROS (RSA operand size) is 3136-bit which is 98 32-bit words. The additional word is set to 0.
+#define PKA_RAM_SIZE 99
+
 #define handle_error(msg) do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
 #define PCI_VENDOR_ID_OFFSET 0x00
@@ -16,21 +19,106 @@
 
 #define PCI_COMMAND_MEMSPACE 1 << 1
 
-void dump_pcidev_config(int fd)
+void dump_pcidev_config(char *config_path)
 {
+    int fd;
     uint16_t val;
+
+    fd = open(config_path, O_RDWR | O_SYNC);
+    if(fd < 0) {
+        handle_error("Error opening configuration space file");
+    }
+
     for(int i = 0; i < 4; ++i) {
         if(pread(fd, &val, sizeof(val), i * 2) < 0) {
             handle_error("Reading from configuration space failed");
         }
         printf("Read from config space at offset 0x%02x: 0x%04x\n", i * 2, val);
     }
+    
+    close(fd);
+}
+
+void read_pcidev_ram(uint32_t *offset, uint32_t n)
+{
+    if(n > PKA_RAM_SIZE)
+        n = PKA_RAM_SIZE;
+    for(int i = n - 1; i >= 0; --i) {
+        printf("0x%04x ", offset[i]);
+    }
+    printf("\n");
+}
+
+void write_pcidev_ram(uint32_t *offset, uint32_t *data, uint32_t n)
+{
+    if(n > PKA_RAM_SIZE) {
+        fprintf(stderr, "Error writing to device's RAM: src data is too large");
+        exit(EXIT_FAILURE);
+    }
+    memcpy(offset, data, n * 4);
+}
+
+void configure_pcidev(char *config_path)
+{
+    int fd;
+    uint16_t pcidev_status;
+
+    fd = open(config_path, O_RDWR | O_SYNC);
+    if(fd < 0) {
+        handle_error("Error opening configuration space file");
+    }
+    pcidev_status = PCI_COMMAND_MEMSPACE;
+    if(pwrite(fd, &pcidev_status, sizeof(pcidev_status), PCI_COMMAND_OFFSET) < 0) {
+        handle_error("Error writing configuration space file");
+    }
+    close(fd);
+}
+
+uint32_t *map_pci_resource(char *resource_path, size_t resource_path_size, size_t length)
+{
+    int fd;
+    uint32_t *map_addr;
+
+    fd = open(resource_path, O_RDWR | O_SYNC);
+    if(fd < 0) {
+        fprintf(stderr, "%s - ", resource_path);
+        handle_error("Error opening BAR resource file");
+    }
+    map_addr = mmap(NULL, length * sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if(map_addr == MAP_FAILED) {
+        fprintf(stderr, "%s - ", resource_path);
+        handle_error("Memory mapping of BAR failed");
+    }
+
+    return map_addr;
+}
+
+void execute_operatione(uint32_t *pka_regs, uint32_t *pka_ram)
+{
+    uint32_t op1[] = {2};
+    uint32_t op2[] = {3};
+    uint32_t tmp;
+
+    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_IN_OP1], op1, 1);
+    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_IN_OP2], op2, 1);
+
+    // Simultaneous read and write using |= operator causes Bus error
+    tmp = pka_regs[CR];
+    pka_regs[CR] = tmp | (PKA_MODE_ARITHMETIC_ADD << PKA_CR_MODE_Pos) | PKA_CR_START;
+
+    // Wait for PROCENDF flag, then clear it and read the result
+    while((pka_regs[SR] & PKA_SR_PROCENDF) == 0)
+        printf("Waiting for PKA to finish...\n");
+    pka_regs[CLRFR] = PKA_CLRFR_PROCENDFC;
+    printf("Result: ");
+    read_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_OUT_RESULT], 1);
 }
 
 int main(int argc, char *argv[])
 {
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s -s <device_bus>:<device_nr>\n", argv[0]);
+        fprintf(stderr, "Usage: %s -s <device_bus>:<device_nr> [-v]\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -42,7 +130,7 @@ int main(int argc, char *argv[])
     size_t sysfs_dev_path_len = 0;
     char config_path[100] = {0};
     char resource0_path[100] = {0};
-    uint16_t pcidev_status;
+    char resource1_path[100] = {0};
     int dump_conf_regs = 0;
 
     // Parse options and arguments
@@ -64,38 +152,29 @@ int main(int argc, char *argv[])
 
     // Open config space file and set command register to enable memspace access
     snprintf(config_path, sizeof(config_path), "%s%s", sysfs_dev_path, "config");
-    fd = open(config_path, O_RDWR | O_SYNC);
-    if(fd < 0) {
-        handle_error("Error opening configuration space file");
-    }
+    configure_pcidev(config_path);
+
+    // Dump config and exit
     if(dump_conf_regs) {
-        dump_pcidev_config(fd);
-        close(fd);
+        dump_pcidev_config(config_path);
         exit(EXIT_SUCCESS);
     }
-    pcidev_status = PCI_COMMAND_MEMSPACE;
-    if(pwrite(fd, &pcidev_status, sizeof(pcidev_status), PCI_COMMAND_OFFSET) < 0) {
-        handle_error("Error writing configuration space file");
-    }
-    close(fd);
 
     // Open and map resource0 file
     snprintf(resource0_path, sizeof(resource0_path), "%s%s", sysfs_dev_path, "resource0");
-    fd = open(resource0_path, O_RDWR | O_SYNC);
-    if(fd < 0) {
-        handle_error("Error opening BAR0 resource file");
-    }
-    pka_regs = mmap(NULL, REGS_NUM * sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    close(fd);
-    if(pka_regs == MAP_FAILED) {
-        perror("Memory mapping of BAR0 failed");
-        return -1;
-    }
+    pka_regs = map_pci_resource(resource0_path, sizeof(resource0_path), REGS_NUM);
 
     pkadev_id = pka_regs[ID];
     printf("Device ID: 0x%08x\n", pkadev_id);
 
+    // Open and map resource1 file
+    snprintf(resource1_path, sizeof(resource1_path), "%s%s", sysfs_dev_path, "resource1");
+    pka_ram = map_pci_resource(resource1_path, sizeof(resource1_path), PKA_RAM_SIZE);
+
+    execute_operatione(pka_regs, pka_ram);
+
     munmap(pka_regs, REGS_NUM * sizeof(uint32_t));
+    munmap(pka_ram, PKA_RAM_SIZE * sizeof(uint32_t));
 
     return 0;
 }
