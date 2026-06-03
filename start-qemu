@@ -1,19 +1,31 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 
 script_dir=$(dirname "$0") && cd "$script_dir"
 
 qemu_pty_link=/tmp/qemu-pty
 rm -f $qemu_pty_link
 
-if [ "$1" = -debug ]; then
-    run_cmd='gdb --args'
+if command -v gdb-tmux 2>/dev/null; then
+    gdb_cmd="gdb-tmux --serial $qemu_pty_link"
+else
+    gdb_cmd=gdb
     tio_pane=$(tmux split-window -h -P -F '#{pane_id}' "tio $qemu_pty_link") && tmux select-pane -L
+fi
+
+if [ "$1" = -debug ]; then
+    run_cmd="$gdb_cmd -x qemu/.gdbinit --args"
+    qemu_serial="-serial pty:$qemu_pty_link"
+elif [ "$1" = -debug-server ]; then
+    run_cmd='gdbserver :1234'
     qemu_serial="-serial pty:$qemu_pty_link"
 else
     run_cmd=exec
+    gdb_port="-chardev socket,path=/tmp/gdb.sock,server=on,wait=off,id=gdb \
+        -device virtio-serial-device \
+        -device virtserialport,chardev=gdb,name=gdbport"
 fi
 
-$run_cmd ./qemu/build/qemu-system-aarch64 $qemu_serial -M virt -cpu cortex-a53 -nographic -smp 1 \
+$run_cmd ./qemu/build/qemu-system-aarch64 $gdb_port $qemu_serial -M virt -cpu cortex-a53 -nographic -smp 1 \
 -kernel ./buildroot/output/images/Image -append "loglevel=2" \
 -virtfs local,path=./shared,mount_tag=shared_folder,security_model=mapped -device pka
 
