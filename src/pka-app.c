@@ -8,7 +8,7 @@
 #include "pka.h"
 
 // The maximum ROS (RSA operand size) is 3136-bit which is 98 32-bit words. The additional word is set to 0.
-#define ROS_SIZE_MAX 99
+#define ROS_SIZE_MAX 99 - 1
 #define PKA_RAM_SIZE 894
 
 #define handle_error(msg) do { perror(msg); exit(EXIT_FAILURE); } while (0)
@@ -52,18 +52,20 @@ void read_pcidev_ram(uint32_t *offset, uint32_t n)
 
 void write_pcidev_ram(uint32_t *offset, uint32_t *data, uint32_t n)
 {
-    if(n > ROS_SIZE_MAX - 1) {
-        fprintf(stderr, "Error writing to device's RAM: src data is too large\n");
+    if(n > ROS_SIZE_MAX) {
+        fprintf(stderr, "Error writing to device's RAM: src data is too large: %d\n", n);
         exit(EXIT_FAILURE);
     }
 
-    // 4-byte block access is required. Bus error appears otherwise.
-    for(size_t i = 0; i < n; ++i) {
-        memcpy(&offset[i], &data[i], 4);
+    // Initiliaze operand's memory space with 0's
+    for(uint32_t i = 0; i <= n; ++i) {
+        memset(&offset[i], 0, 4);
     }
 
-    // Set additional word to 0
-    memset(&offset[n], 0, 4);
+    // 4-byte block access is required. Bus error appears otherwise.
+    for(uint32_t i = 0; i < n; ++i) {
+        memcpy(&offset[i], &data[i], 4);
+    }
 }
 
 void configure_pcidev(char *config_path)
