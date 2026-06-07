@@ -27,6 +27,7 @@ enum {
     ID,
     RAM_ADDR_OFFSET,    /*!< RAM address to read from using register */
     RAM_DATA,           /*!< Data read from RAM_ADDR_OFFSET */
+    DURATION,           /*!< Duration time in nanoseconds of the last operation */
     REGS_NUM,
 };
 

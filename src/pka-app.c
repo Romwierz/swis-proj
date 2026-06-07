@@ -213,6 +213,11 @@ int main(int argc, char *argv[])
     int dump_conf_regs = 0;
     pka_op_args_t pka_op_args;
 
+    // Initialize args
+    pka_op_args.op_len_bits = 0;
+    pka_op_args.exponent_len_bits = 0;
+    pka_op_args.modulus_len_bits = 0;
+
     // Parse options and arguments
     while((opt = getopt(argc, argv, "s:vm:1:2:")) != -1) {
         switch(opt) {
@@ -255,7 +260,13 @@ int main(int argc, char *argv[])
         pkadev_id = pka_regs[ID];
         printf("Device ID: 0x%08x\n", pkadev_id);
         dump_pcidev_config(config_path);
-        exit(EXIT_SUCCESS);
+        goto exit;
+    }
+
+    // Read the duration time and exit
+    if(strncmp(pka_op_args.mode, "time", strlen("time")) == 0) {
+        printf("Time duration of the last operation: %d ns\n", pka_regs[DURATION]);
+        goto exit;
     }
 
     // Open and map resource1 file
@@ -264,8 +275,9 @@ int main(int argc, char *argv[])
 
     execute_operatione(pka_regs, pka_ram, &pka_op_args);
 
-    munmap(pka_regs, REGS_NUM * sizeof(uint32_t));
     munmap(pka_ram, PKA_RAM_SIZE * sizeof(uint32_t));
+exit:
+    munmap(pka_regs, REGS_NUM * sizeof(uint32_t));
 
-    return 0;
+    return EXIT_SUCCESS;
 }
