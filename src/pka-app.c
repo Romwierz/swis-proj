@@ -20,6 +20,23 @@
 
 #define PCI_COMMAND_MEMSPACE 1 << 1
 
+typedef struct pka_op_args {
+    char *mode;
+    uint32_t op1[ROS_SIZE_MAX];
+    uint32_t op2[ROS_SIZE_MAX];
+    uint32_t modulus[ROS_SIZE_MAX];
+    uint32_t exponent[ROS_SIZE_MAX];
+    uint32_t montgomery_param[ROS_SIZE_MAX]; // R^2 mod n
+    uint32_t op_len_bits;
+    uint32_t modulus_len_bits;
+    uint32_t exponent_len_bits;
+} pka_op_args_t;
+
+struct pka_op_map {
+    char *mode;
+    void (*op)(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *);
+};
+
 void dump_pcidev_config(char *config_path)
 {
     int fd;
@@ -84,7 +101,7 @@ void configure_pcidev(char *config_path)
     close(fd);
 }
 
-uint32_t *map_pci_resource(char *resource_path, size_t resource_path_size, size_t length)
+uint32_t *map_pci_resource(char *resource_path, size_t length)
 {
     int fd;
     uint32_t *map_addr;
@@ -104,35 +121,87 @@ uint32_t *map_pci_resource(char *resource_path, size_t resource_path_size, size_
     return map_addr;
 }
 
-void execute_operatione(uint32_t *pka_regs, uint32_t *pka_ram)
+void arithmetic_add(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *op_args)
 {
-    uint32_t op1[] = {2};
-    uint32_t op2[] = {3};
+    uint32_t *op1 = op_args->op1;
+    uint32_t *op2 = op_args->op2;
+    uint32_t op_len_words = op_args->op_len_bits / 32;
     uint32_t tmp;
 
-    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_IN_OP1], op1, 1);
-    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_IN_OP2], op2, 1);
+    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_NB_BITS], &op_args->op_len_bits, 1);
+    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_IN_OP1], op1, op_len_words);
+    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_IN_OP2], op2, op_len_words);
 
     // Simultaneous read and write using |= operator causes Bus error
     tmp = pka_regs[CR];
+    tmp &= ~PKA_CR_MODE_Msk;
     pka_regs[CR] = tmp | (PKA_MODE_ARITHMETIC_ADD << PKA_CR_MODE_Pos) | PKA_CR_START;
 
     // Wait for PROCENDF flag, then clear it and read the result
     while((pka_regs[SR] & PKA_SR_PROCENDF) == 0)
         printf("Waiting for PKA to finish...\n");
-    pka_regs[CLRFR] = PKA_CLRFR_PROCENDFC;
+
     printf("Result: ");
     read_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_OUT_RESULT], 1);
+}
+
+void arithmetic_sub(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *op_args)
+{
+    uint32_t *op1 = op_args->op1;
+    uint32_t *op2 = op_args->op2;
+    uint32_t op_len_words = op_args->op_len_bits / 32;
+    uint32_t tmp;
+
+    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_SUB_NB_BITS], &op_args->op_len_bits, 1);
+    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_SUB_IN_OP1], op1, op_len_words);
+    write_pcidev_ram(&pka_ram[PKA_ARITHMETIC_SUB_IN_OP2], op2, op_len_words);
+
+    // Simultaneous read and write using |= operator causes Bus error
+    tmp = pka_regs[CR];
+    tmp &= ~PKA_CR_MODE_Msk;
+    pka_regs[CR] = tmp | (PKA_MODE_ARITHMETIC_SUB << PKA_CR_MODE_Pos) | PKA_CR_START;
+
+    // Wait for PROCENDF flag, then clear it and read the result
+    while((pka_regs[SR] & PKA_SR_PROCENDF) == 0)
+        printf("Waiting for PKA to finish...\n");
+
+    printf("Result: ");
+    read_pcidev_ram(&pka_ram[PKA_ARITHMETIC_SUB_OUT_RESULT], 1);
+}
+
+const struct pka_op_map op_map_table[] = {
+    {"add", arithmetic_add},
+    {"sub", arithmetic_sub},
+    {NULL, NULL},
+};
+
+void execute_operatione(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *pka_op_args)
+{
+    // Set arithmetic_add as default operation
+    void (*op)(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *) = arithmetic_add;
+
+    // Check operation operation mode
+    for(int i = 0; op_map_table[i].op != NULL; ++i) {
+        if(strncmp(pka_op_args->mode, op_map_table[i].mode, strlen(pka_op_args->mode)) == 0) {
+            op = op_map_table[i].op;
+            break;
+        }
+    }
+
+    if(op != NULL)
+        op(pka_regs, pka_ram, pka_op_args);
+
+    pka_regs[CLRFR] = PKA_CLRFR_PROCENDFC;
 }
 
 int main(int argc, char *argv[])
 {
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s -s <device_bus>:<device_nr> [-v]\n", argv[0]);
+        fprintf(stderr, "Usage: %s -s device_bus:device_nr [-v] -m mode operands...\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    int i, fd, opt;
+    int opt;
     uint32_t *pka_regs, *pka_ram; // BAR0 and BAR1
     uint32_t pcidev_bus, pcidev_nr, pkadev_id;
     char *token;
@@ -142,9 +211,10 @@ int main(int argc, char *argv[])
     char resource0_path[100] = {0};
     char resource1_path[100] = {0};
     int dump_conf_regs = 0;
+    pka_op_args_t pka_op_args;
 
     // Parse options and arguments
-    while((opt = getopt(argc, argv, "s:v")) != -1) {
+    while((opt = getopt(argc, argv, "s:vm:1:2:")) != -1) {
         switch(opt) {
         case 's':
             token = strtok(optarg, ":");
@@ -157,6 +227,18 @@ int main(int argc, char *argv[])
         case 'v':
             dump_conf_regs = 1;
             break;
+        case 'm':
+            pka_op_args.mode = optarg;
+            break;
+        case '1':
+            pka_op_args.op1[0] = atoi(optarg);
+            pka_op_args.op_len_bits = sizeof(pka_op_args.op1) * 8;
+            printf("op1: %d\n", pka_op_args.op1[0]);
+            break;
+        case '2':
+            pka_op_args.op2[0] = atoi(optarg);
+            printf("op2: %d\n", pka_op_args.op2[0]);
+            break;
         }
     }
 
@@ -164,24 +246,23 @@ int main(int argc, char *argv[])
     snprintf(config_path, sizeof(config_path), "%s%s", sysfs_dev_path, "config");
     configure_pcidev(config_path);
 
+    // Open and map resource0 file
+    snprintf(resource0_path, sizeof(resource0_path), "%s%s", sysfs_dev_path, "resource0");
+    pka_regs = map_pci_resource(resource0_path, REGS_NUM);
+
     // Dump config and exit
     if(dump_conf_regs) {
+        pkadev_id = pka_regs[ID];
+        printf("Device ID: 0x%08x\n", pkadev_id);
         dump_pcidev_config(config_path);
         exit(EXIT_SUCCESS);
     }
 
-    // Open and map resource0 file
-    snprintf(resource0_path, sizeof(resource0_path), "%s%s", sysfs_dev_path, "resource0");
-    pka_regs = map_pci_resource(resource0_path, sizeof(resource0_path), REGS_NUM);
-
-    pkadev_id = pka_regs[ID];
-    printf("Device ID: 0x%08x\n", pkadev_id);
-
     // Open and map resource1 file
     snprintf(resource1_path, sizeof(resource1_path), "%s%s", sysfs_dev_path, "resource1");
-    pka_ram = map_pci_resource(resource1_path, sizeof(resource1_path), PKA_RAM_SIZE);
+    pka_ram = map_pci_resource(resource1_path, PKA_RAM_SIZE);
 
-    execute_operatione(pka_regs, pka_ram);
+    execute_operatione(pka_regs, pka_ram, &pka_op_args);
 
     munmap(pka_regs, REGS_NUM * sizeof(uint32_t));
     munmap(pka_ram, PKA_RAM_SIZE * sizeof(uint32_t));
