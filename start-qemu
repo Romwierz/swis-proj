@@ -19,10 +19,12 @@ elif [ "$1" = -debug-server ]; then
     run_cmd='gdbserver :1234'
     qemu_serial="-serial pty:$qemu_pty_link"
 else
+    gdb_port_path=/tmp/gdb.sock
     run_cmd=exec
-    gdb_port="-chardev socket,path=/tmp/gdb.sock,server=on,wait=off,id=gdb \
+    gdb_port="-chardev socket,path=${gdb_port_path},server=on,wait=off,id=gdb \
         -device virtio-serial-device \
         -device virtserialport,chardev=gdb,name=gdbport"
+    echo "GDB server will listen for connection on $gdb_port_path"
 fi
 
 $run_cmd ./qemu/build/qemu-system-aarch64 $gdb_port $qemu_serial -M virt -cpu cortex-a53 -nographic -smp 1 \

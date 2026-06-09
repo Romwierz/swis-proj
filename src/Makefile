@@ -1,5 +1,4 @@
-MY_CFLAGS = $(filter-out -g0, $(CFLAGS))
-MY_CFLAGS = $(filter-out -O2, $(CFLAGS))
+MY_CFLAGS = $(filter-out -O2 -g0, $(CFLAGS))
 MY_CFLAGS += -Wall -Wextra -g -no-pie -O0
 
 all: ../shared/pka-app ../shared/pka-test
