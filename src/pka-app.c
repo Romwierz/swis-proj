@@ -61,8 +61,9 @@ void read_pcidev_ram(uint32_t *offset, uint32_t n)
 {
     if(n > PKA_RAM_SIZE)
         n = PKA_RAM_SIZE;
+    printf("0x");
     for(int i = n - 1; i >= 0; --i) {
-        printf("0x%04x ", offset[i]);
+        printf("%08x", offset[i]);
     }
     printf("\n");
 }
@@ -142,7 +143,7 @@ void arithmetic_add(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *op_arg
         printf("Waiting for PKA to finish...\n");
 
     printf("Result: ");
-    read_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_OUT_RESULT], 1);
+    read_pcidev_ram(&pka_ram[PKA_ARITHMETIC_ADD_OUT_RESULT], op_len_words);
 }
 
 void arithmetic_sub(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *op_args)
@@ -166,7 +167,7 @@ void arithmetic_sub(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *op_arg
         printf("Waiting for PKA to finish...\n");
 
     printf("Result: ");
-    read_pcidev_ram(&pka_ram[PKA_ARITHMETIC_SUB_OUT_RESULT], 1);
+    read_pcidev_ram(&pka_ram[PKA_ARITHMETIC_SUB_OUT_RESULT], op_len_words);
 }
 
 const struct pka_op_map op_map_table[] = {
@@ -194,6 +195,41 @@ void execute_operatione(uint32_t *pka_regs, uint32_t *pka_ram, pka_op_args_t *pk
     pka_regs[CLRFR] = PKA_CLRFR_PROCENDFC;
 }
 
+uint32_t str_to_u32(char *src, uint32_t *dest)
+{
+    size_t len = 0;
+    size_t msb_len = 0;
+    char tmp[9] = {0};
+    memset(tmp, '0', 8);
+
+    // Get rid of leading '0x' and following 0's
+    while(*src == '0' || *src == 'x')
+        src++;
+
+    // Get length of operand in 4-byte words and length of msb in chars
+    len = strlen(src) / 8;
+    msb_len = strlen(src) % 8;
+
+    if(len + (msb_len && 1) > ROS_SIZE_MAX) {
+        fprintf(stderr, "Operand length too big\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Fill the dest array
+    if(msb_len != 0) {
+        strncpy(&tmp[8 - msb_len], src, msb_len);
+        dest[len] = strtoul(tmp, NULL, 16);
+        src += msb_len;
+    }
+    for(int i = 0; i < len; ++i) {
+        memset(tmp, '0', 8);
+        strncpy(tmp, src + 8*i, 8);
+        dest[len - 1 - i] = strtoul(tmp, NULL, 16);
+    }
+
+    return len + (msb_len && 1);
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 3) {
@@ -212,8 +248,14 @@ int main(int argc, char *argv[])
     char resource1_path[100] = {0};
     int dump_conf_regs = 0;
     pka_op_args_t pka_op_args;
+    uint32_t op_len_bits;
 
     // Initialize args
+    memset(&pka_op_args.op1, 0, sizeof(pka_op_args.op1));
+    memset(&pka_op_args.op2, 0, sizeof(pka_op_args.op2));
+    memset(&pka_op_args.modulus, 0, sizeof(pka_op_args.modulus));
+    memset(&pka_op_args.exponent, 0, sizeof(pka_op_args.exponent));
+    memset(&pka_op_args.montgomery_param, 0, sizeof(pka_op_args.montgomery_param));
     pka_op_args.op_len_bits = 0;
     pka_op_args.exponent_len_bits = 0;
     pka_op_args.modulus_len_bits = 0;
@@ -236,13 +278,13 @@ int main(int argc, char *argv[])
             pka_op_args.mode = optarg;
             break;
         case '1':
-            pka_op_args.op1[0] = atoi(optarg);
-            pka_op_args.op_len_bits = sizeof(pka_op_args.op1) * 8;
-            printf("op1: %d\n", pka_op_args.op1[0]);
+            pka_op_args.op_len_bits = 32 * str_to_u32(optarg, pka_op_args.op1);
             break;
         case '2':
-            pka_op_args.op2[0] = atoi(optarg);
-            printf("op2: %d\n", pka_op_args.op2[0]);
+            op_len_bits = 32 * str_to_u32(optarg, pka_op_args.op2);
+            if(op_len_bits > pka_op_args.op_len_bits)
+                pka_op_args.op_len_bits = op_len_bits;
+
             break;
         }
     }
